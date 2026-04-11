@@ -160,10 +160,36 @@ input[type="text"] {
 }
 
 .main {
-  display: flex;
-  flex-direction: column;
+  position: relative;
   overflow: hidden;
   background: var(--bg);
+}
+
+/*
+ * Each open session lives in a `.terminal-host` block. They're stacked
+ * absolutely on top of each other inside `.main`, and only `.active` is
+ * visible. This keeps every xterm.js instance (and its WebSocket attach
+ * to the remote tmux session) alive across sidebar switches, so flipping
+ * between sessions is instant — no reattach, no PTY rebuild.
+ *
+ * `visibility: hidden` (rather than `display: none`) keeps the element
+ * laid out so xterm.js's fit calculations remain correct while hidden.
+ * `pointer-events: none` on hidden hosts prevents stray clicks from
+ * being captured by an off-screen terminal.
+ */
+.terminal-host {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-host.hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.terminal-host.active {
+  visibility: visible;
+  z-index: 1;
 }
 .main-header {
   padding: 8px 16px;

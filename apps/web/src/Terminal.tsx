@@ -39,6 +39,14 @@ export interface TerminalProps {
   sessionId: string;
   hostId: string;
   tmuxName: string;
+  /**
+   * True when this terminal is the one currently visible in the main pane.
+   * The component stays mounted and WS-attached even when inactive (so
+   * switching between sessions is instant), but it refits + refocuses
+   * itself whenever it transitions from hidden to visible to handle window
+   * resizes that happened while it wasn't being shown.
+   */
+  isActive: boolean;
 }
 
 export function TerminalPanel({
@@ -46,6 +54,7 @@ export function TerminalPanel({
   sessionId,
   hostId,
   tmuxName,
+  isActive,
 }: TerminalProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Xterm | null>(null);
@@ -408,11 +417,35 @@ export function TerminalPanel({
         fitRef.current = null;
       };
     } // end setupAfterTermReady
-    // We intentionally don't depend on tmuxName/hostId here — changing the
-    // session id by selecting a different sidebar entry remounts via React's
-    // `key` prop in the parent.
+    // We intentionally don't depend on tmuxName/hostId here — they're set
+    // once at mount and never change for the lifetime of this component.
+    // Switching active session in the sidebar does NOT remount this
+    // component anymore (we render every open session stacked); the
+    // separate isActive effect below handles refit/refocus on switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws, sessionId]);
+
+  // Refit + refocus when this terminal becomes the active one. Without
+  // this, switching to a previously-hidden session might leave xterm.js
+  // sized for the dimensions it had when it was last visible (if the
+  // window was resized in the meantime), and the cursor would be on
+  // some other terminal's hidden helper textarea.
+  useEffect(() => {
+    if (!isActive) return;
+    const term = xtermRef.current;
+    const fit = fitRef.current;
+    if (!term || !fit) return;
+    try {
+      fit.fit();
+    } catch {
+      // container detached during a fast switch; ignore
+    }
+    term.focus();
+    const { cols, rows } = term;
+    if (cols > 0 && rows > 0) {
+      ws.send({ t: "resize", sessionId, cols, rows });
+    }
+  }, [isActive, ws, sessionId]);
 
   return <div ref={containerRef} className="terminal-wrap" />;
 }

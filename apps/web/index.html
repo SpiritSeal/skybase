@@ -5,11 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0a" />
 
+    <!--
+      Favicons. The SVG is the source of truth (re-generate the PNGs by
+      running `pnpm --filter @skybase/web gen-icons`). Modern browsers
+      pick the SVG via `type="image/svg+xml"`; the PNG is a fallback for
+      ancient browsers, and apple-touch-icon is required by iOS for the
+      home-screen install.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
     <!-- iOS PWA meta — required for "Add to Home Screen" + Web Push 16.4+ -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="skybase" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
 
     <title>skybase</title>
   </head>

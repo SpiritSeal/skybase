@@ -299,32 +299,42 @@ export function App(): JSX.Element {
         isLocalDev={isLocalDev}
       />
       <main className="main">
-        {active ? (
-          (() => {
-            const s = open.find((x) => x.id === active);
-            if (!s) return <div className="empty">No session</div>;
-            return (
-              <>
-                <header className="main-header">
-                  <span>
-                    {s.hostLabel} · <strong>{s.tmuxName}</strong>
-                  </span>
-                  <span className="main-status">ws: {status}</span>
-                </header>
-                <TerminalPanel
-                  key={s.id}
-                  ws={ws}
-                  sessionId={s.id}
-                  hostId={s.hostId}
-                  tmuxName={s.tmuxName}
-                />
-              </>
-            );
-          })()
-        ) : (
+        {open.length === 0 ? (
           <div className="empty">
             Pick a host on the left to open a tmux session.
           </div>
+        ) : (
+          // Render every open session stacked in absolute positioning, with
+          // only the active one visible. This keeps every Terminal mounted
+          // (and its xterm + WebSocket attach + remote ssh+tmux session
+          // alive) so switching between sessions is instant — no reattach,
+          // no PTY rebuild, no scrollback re-replay. The Terminal component
+          // observes its `isActive` prop and refits + refocuses when it
+          // becomes active, so resizes that happened while hidden are
+          // applied at the right moment.
+          open.map((s) => (
+            <div
+              key={s.id}
+              className={`terminal-host ${
+                s.id === active ? "active" : "hidden"
+              }`}
+              aria-hidden={s.id !== active}
+            >
+              <header className="main-header">
+                <span>
+                  {s.hostLabel} · <strong>{s.tmuxName}</strong>
+                </span>
+                <span className="main-status">ws: {status}</span>
+              </header>
+              <TerminalPanel
+                ws={ws}
+                sessionId={s.id}
+                hostId={s.hostId}
+                tmuxName={s.tmuxName}
+                isActive={s.id === active}
+              />
+            </div>
+          ))
         )}
       </main>
 
