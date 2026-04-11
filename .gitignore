@@ -3,6 +3,7 @@ dist
 build
 .DS_Store
 *.log
+*.tsbuildinfo
 .env
 .env.local
 coverage
@@ -26,3 +27,13 @@ vapid.json
 *.auto.tfvars
 !*.tfvars.example
 crash.log
+# *.tfplan files contain a snapshot of the entire Terraform plan including
+# the rendered values of every variable — that means OAuth secrets, billing
+# account IDs, anything sensitive in secrets.auto.tfvars ends up in the
+# plan file. NEVER commit these.
+*.tfplan
+*.tfplan.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

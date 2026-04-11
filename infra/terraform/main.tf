@@ -27,6 +27,9 @@ locals {
     "iap.googleapis.com",
     "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com",
+    # Kept enabled even though Terraform doesn't manage the billing budget
+    # itself (created out-of-band via the REST API). Disabling the API
+    # would break the existing budget.
     "billingbudgets.googleapis.com",
   ])
   iap_all_members = toset(concat([var.iap_member], var.iap_members))
@@ -45,62 +48,53 @@ resource "google_service_account" "skybase" {
   display_name = "skybase server"
 }
 
-# Read-only access to the Secret Manager secrets the VM mounts at boot.
+# Secrets are created out-of-band via `gcloud secrets create` (see DEPLOY.md
+# step 5). Terraform reads them via data sources rather than managing them
+# as resources, so the secret data lifecycle is decoupled from the infra
+# lifecycle — `terraform destroy` won't delete your VAPID keypair (which
+# would brick every Web Push subscription) and `terraform import` is never
+# needed.
+data "google_secret_manager_secret" "ssh_key" {
+  secret_id = var.ssh_key_secret_id
+}
+
+data "google_secret_manager_secret" "known_hosts" {
+  secret_id = var.known_hosts_secret_id
+}
+
+data "google_secret_manager_secret" "vapid" {
+  secret_id = var.vapid_secret_id
+}
+
+data "google_secret_manager_secret" "webhook_token" {
+  count     = var.webhook_url == "" ? 0 : 1
+  secret_id = var.webhook_token_secret_id
+}
+
+# Grant the VM service account read access to the secrets above.
 resource "google_secret_manager_secret_iam_member" "ssh_key" {
-  secret_id = google_secret_manager_secret.ssh_key.id
+  secret_id = data.google_secret_manager_secret.ssh_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.skybase.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "known_hosts" {
-  secret_id = google_secret_manager_secret.known_hosts.id
+  secret_id = data.google_secret_manager_secret.known_hosts.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.skybase.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "vapid" {
-  secret_id = google_secret_manager_secret.vapid.id
+  secret_id = data.google_secret_manager_secret.vapid.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.skybase.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "webhook_token" {
   count     = var.webhook_url == "" ? 0 : 1
-  secret_id = google_secret_manager_secret.webhook_token[0].id
+  secret_id = data.google_secret_manager_secret.webhook_token[0].id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.skybase.email}"
-}
-
-# ── Secrets (versions are uploaded by hand or via a helper script) ───────
-resource "google_secret_manager_secret" "ssh_key" {
-  secret_id = var.ssh_key_secret_id
-  replication { auto {} }
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_secret_manager_secret" "known_hosts" {
-  secret_id = var.known_hosts_secret_id
-  replication { auto {} }
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_secret_manager_secret" "vapid" {
-  secret_id = var.vapid_secret_id
-  replication { auto {} }
-  depends_on = [google_project_service.apis]
-
-  # Rotating VAPID invalidates every push subscription on every device.
-  # Once you've launched, never destroy this secret.
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "google_secret_manager_secret" "webhook_token" {
-  count     = var.webhook_url == "" ? 0 : 1
-  secret_id = var.webhook_token_secret_id
-  replication { auto {} }
-  depends_on = [google_project_service.apis]
 }
 
 # ── Artifact Registry for the container image ────────────────────────────
@@ -149,6 +143,7 @@ locals {
 
   cloud_init = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     image                  = var.image
+    project_id             = var.project_id
     ssh_key_secret_id      = var.ssh_key_secret_id
     known_hosts_secret_id  = var.known_hosts_secret_id
     vapid_secret_id        = var.vapid_secret_id
@@ -209,6 +204,13 @@ resource "google_compute_instance_group" "skybase" {
     name = "http"
     port = 8080
   }
+
+  # Force the group to be updated whenever the VM is replaced. Without
+  # this, tainting + recreating the VM leaves the instance group
+  # referencing the OLD VM ID and the LB has zero healthy backends.
+  lifecycle {
+    replace_triggered_by = [google_compute_instance.skybase]
+  }
 }
 
 # ── Health check for the LB backend ──────────────────────────────────────
@@ -247,8 +249,8 @@ resource "google_compute_backend_service" "skybase" {
 
   iap {
     enabled              = true
-    oauth2_client_id     = google_iap_client.skybase.client_id
-    oauth2_client_secret = google_iap_client.skybase.secret
+    oauth2_client_id     = var.iap_oauth2_client_id
+    oauth2_client_secret = var.iap_oauth2_client_secret
   }
 
   log_config {
@@ -263,11 +265,27 @@ resource "google_compute_url_map" "skybase" {
   default_service = google_compute_backend_service.skybase.id
 }
 
+resource "random_id" "cert_suffix" {
+  byte_length = 4
+  keepers = {
+    domains = join(",", [var.domain])
+  }
+}
+
 resource "google_compute_managed_ssl_certificate" "skybase" {
-  name = "skybase"
+  # Suffix with a random hex so that we can force a fresh cert (and a
+  # new validation cycle) by tainting random_id.cert_suffix without
+  # tripping the "resource in use" error during destroy. Combined with
+  # create_before_destroy below, Terraform creates the new cert first,
+  # retargets the HTTPS proxy, then deletes the old cert.
+  name = "skybase-${random_id.cert_suffix.hex}"
 
   managed {
     domains = [var.domain]
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -290,17 +308,14 @@ resource "google_compute_global_forwarding_rule" "skybase" {
 }
 
 # ── Identity-Aware Proxy ─────────────────────────────────────────────────
-resource "google_iap_brand" "skybase" {
-  support_email     = var.iap_support_email
-  application_title = "skybase"
-
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_iap_client" "skybase" {
-  display_name = "skybase"
-  brand        = google_iap_brand.skybase.name
-}
+# NOTE: `google_iap_brand` and `google_iap_client` are NOT created here
+# because Google deprecated programmatic IAP brand creation in July 2025
+# for projects that aren't part of an organization (i.e. all personal
+# Google accounts). The OAuth consent screen + OAuth client ID must be
+# created manually in the GCP Console once per project. The resulting
+# client ID/secret are passed in via `iap_oauth2_client_id` and
+# `iap_oauth2_client_secret` variables and consumed by the backend
+# service's `iap` block above. See DEPLOY.md for the manual steps.
 
 resource "google_iap_web_backend_service_iam_member" "skybase" {
   for_each            = local.iap_all_members
@@ -309,42 +324,12 @@ resource "google_iap_web_backend_service_iam_member" "skybase" {
   member              = each.value
 }
 
-# ── Billing budget (alerts only — does NOT hard-cap spend) ───────────────
-# GCP budgets fire Pub/Sub events at threshold percentages; you can wire
-# them to a Cloud Function that disables billing if you want a true
-# killswitch. For a personal $10/mo cap with IAP-restricted access, the
-# alert at 100% is enough — there's no public surface to be abused.
-resource "google_billing_budget" "skybase" {
-  billing_account = var.billing_account
-  display_name    = "skybase monthly cap"
-
-  budget_filter {
-    projects = ["projects/${var.project_id}"]
-  }
-
-  amount {
-    specified_amount {
-      currency_code = "USD"
-      units         = tostring(var.monthly_budget_usd)
-    }
-  }
-
-  threshold_rules {
-    threshold_percent = 0.5
-  }
-  threshold_rules {
-    threshold_percent = 0.9
-  }
-  threshold_rules {
-    threshold_percent = 1.0
-  }
-  threshold_rules {
-    threshold_percent = 1.0
-    spend_basis       = "FORECASTED_SPEND"
-  }
-
-  depends_on = [google_project_service.apis]
-}
+# NOTE: the $10 monthly budget alert is NOT created by Terraform — it was
+# stood up out-of-band against the REST API in the initial GCP setup
+# (`scripts/create-budget.sh` documents the call). The Terraform resource
+# `google_billing_budget` requires Application Default Credentials to have
+# a quota project set, which trips up personal accounts; the REST path
+# avoids that entirely.
 
 # ── Outputs ──────────────────────────────────────────────────────────────
 output "lb_ip" {

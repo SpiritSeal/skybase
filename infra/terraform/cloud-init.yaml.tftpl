@@ -1,9 +1,83 @@
 #cloud-config
 #
-# COS cloud-init: pull the skybase container, fetch secrets from Secret
-# Manager into a tmpfs (so they're never on disk), then run.
+# Container-Optimized OS cloud-init for skybase. Pulls the container image
+# from Artifact Registry, fetches secrets from Secret Manager into a tmpfs
+# (so they never touch persistent disk), then runs the server.
+#
+# COS notes for future maintainers:
+#   - /usr is mounted READ-ONLY (verity-protected) — write_files cannot put
+#     anything under /usr/local/bin or similar. Stick to /etc/, /var/, /tmp/.
+#   - Standard tools live in /bin, NOT /usr/bin (no /usr/bin/mkdir, etc.)
+#   - There is no `gcloud` binary on the host, but curl IS available.
+#   - systemd performs $VARIABLE substitution on the unit file at parse
+#     time, which clobbers shell variables like `$T` and `$(cmd)`. We
+#     keep all the bash logic in an external script under /etc/skybase/
+#     (auto-created by cloud-init write_files) so the systemd unit only
+#     invokes a single command and never tries to embed dollar signs.
 
 write_files:
+  # Secret-fetch helper. cloud-init creates /etc/skybase/ automatically when
+  # writing this path. Uses jq-free JSON parsing because COS doesn't ship jq.
+  - path: /etc/skybase/fetch-secret.sh
+    permissions: "0755"
+    owner: root
+    content: |
+      #!/bin/bash
+      # Usage: fetch-secret.sh PROJECT SECRET_NAME OUTPUT_PATH
+      # Fetches the latest version of SECRET_NAME from Secret Manager and
+      # writes the decoded bytes to OUTPUT_PATH (chmod 600).
+      set -eu
+      PROJECT="$1"
+      SECRET="$2"
+      OUTPUT="$3"
+      TOKEN=$(curl -sf -H 'Metadata-Flavor: Google' \
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+      [ -n "$TOKEN" ] || { echo "fetch-secret: empty token" >&2; exit 1; }
+      # Note `?alt=json&prettyPrint=false` — without it, gcloud's REST API
+      # returns pretty-printed JSON spanning multiple lines and the
+      # line-based sed below extracts garbage that base64 chokes on.
+      RESPONSE=$(curl -sf \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "x-goog-user-project: $PROJECT" \
+        "https://secretmanager.googleapis.com/v1/projects/$PROJECT/secrets/$SECRET/versions/latest:access?alt=json&prettyPrint=false")
+      printf '%s' "$RESPONSE" \
+        | tr -d '\n' \
+        | sed -E 's/.*"data":"([^"]+)".*/\1/' \
+        | base64 -d > "$OUTPUT"
+      # uid/gid 1500 matches the `skybase` user inside the container
+      # (declared in the Dockerfile). Numeric so we don't need to look up
+      # any user that may not exist on the COS host.
+      chown 1500:1500 "$OUTPUT"
+      chmod 600 "$OUTPUT"
+      [ -s "$OUTPUT" ] || { echo "fetch-secret: $SECRET wrote 0 bytes" >&2; exit 1; }
+
+  # Docker login helper. Uses an access token from the metadata server to
+  # authenticate to Artifact Registry. The VM service account must have
+  # roles/artifactregistry.reader on the project (granted out-of-band).
+  - path: /etc/skybase/docker-login.sh
+    permissions: "0755"
+    owner: root
+    content: |
+      #!/bin/bash
+      # Usage: docker-login.sh ARTIFACT_REGISTRY_HOST
+      # Example: docker-login.sh us-central1-docker.pkg.dev
+      #
+      # COS has /root mounted read-only, so docker login can't write its
+      # default ~/.docker/config.json. We point DOCKER_CONFIG at a tmpfs
+      # path under /var/lib/skybase which IS writable. The same env var
+      # has to be set in the systemd unit for `docker pull` and `docker
+      # run` to find the credentials.
+      set -eu
+      HOST="$1"
+      export DOCKER_CONFIG=/var/lib/skybase/docker
+      mkdir -p "$DOCKER_CONFIG"
+      TOKEN=$(curl -sf -H 'Metadata-Flavor: Google' \
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+      [ -n "$TOKEN" ] || { echo "docker-login: empty token" >&2; exit 1; }
+      printf '%s' "$TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://$HOST"
+
   - path: /etc/systemd/system/skybase.service
     permissions: "0644"
     owner: root
@@ -18,41 +92,35 @@ write_files:
       Type=simple
       Restart=always
       RestartSec=5
+      # Allow up to 5 minutes for the first start (slow first-time docker
+      # pull of the skybase image). Subsequent starts are fast.
+      TimeoutStartSec=300
+      # Point Docker at a writable config dir — /root is read-only on COS.
+      # Both docker login (in docker-login.sh) and docker pull/run below
+      # need to see the same DOCKER_CONFIG path.
+      Environment=DOCKER_CONFIG=/var/lib/skybase/docker
 
-      # Make /run/skybase a private tmpfs and populate it with the secrets
-      # we fetch from Secret Manager. Files never touch persistent disk.
-      ExecStartPre=/usr/bin/mkdir -p /run/skybase /var/lib/skybase /etc/skybase
-      ExecStartPre=/usr/bin/mount -t tmpfs -o size=1m,mode=0700 tmpfs /run/skybase
-      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${ssh_key_secret_id} > /run/skybase/id_rsa && chmod 600 /run/skybase/id_rsa'
-      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${known_hosts_secret_id} > /run/skybase/known_hosts && chmod 600 /run/skybase/known_hosts'
-      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${vapid_secret_id} > /run/skybase/vapid.json && chmod 600 /run/skybase/vapid.json'
+      ExecStartPre=-/bin/mkdir -p /run/skybase /var/lib/skybase
+      # tmpfs owned by uid 1500 so the container's `skybase` user (also
+      # uid 1500, set in the Dockerfile) can read the secrets that
+      # fetch-secret.sh writes here.
+      ExecStartPre=-/bin/mount -t tmpfs -o size=1m,mode=0700,uid=1500,gid=1500 tmpfs /run/skybase
+      # /var/lib/skybase needs to be writable by the container too (for the
+      # web push subscriptions JSON store).
+      ExecStartPre=-/bin/chown 1500:1500 /var/lib/skybase
+      ExecStartPre=/etc/skybase/fetch-secret.sh ${project_id} ${ssh_key_secret_id} /run/skybase/id_rsa
+      ExecStartPre=/etc/skybase/fetch-secret.sh ${project_id} ${known_hosts_secret_id} /run/skybase/known_hosts
+      ExecStartPre=/etc/skybase/fetch-secret.sh ${project_id} ${vapid_secret_id} /run/skybase/vapid.json
 
-      # Configure docker to authenticate to Artifact Registry.
-      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries=${artifact_registry_host}
+      ExecStartPre=/etc/skybase/docker-login.sh ${artifact_registry_host}
       ExecStartPre=/usr/bin/docker pull ${image}
 
-      ExecStart=/usr/bin/docker run --rm --name skybase \
-        -p 8080:8080 \
-        -v /run/skybase:/run/skybase:ro \
-        -v /var/lib/skybase:/var/lib/skybase \
-        -v /etc/skybase:/etc/skybase:ro \
-        -e SKYBASE_TRUST_IAP=1 \
-        %{ if webhook_url != "" }-e SKYBASE_WEBHOOK_URL=${webhook_url} -e SKYBASE_WEBHOOK_TOKEN_FILE=/run/skybase/webhook_token \%{ endif }
-        ${image}
+      ExecStart=/usr/bin/docker run --rm --name skybase -p 8080:8080 -v /run/skybase:/run/skybase:ro -v /var/lib/skybase:/var/lib/skybase -e SKYBASE_TRUST_IAP=1 %{ if webhook_url != "" }-e SKYBASE_WEBHOOK_URL=${webhook_url} -e SKYBASE_WEBHOOK_TOKEN_FILE=/run/skybase/webhook_token %{ endif }${image}
 
       ExecStop=/usr/bin/docker stop skybase
 
       [Install]
       WantedBy=multi-user.target
-
-  - path: /etc/skybase/hosts.yaml
-    permissions: "0644"
-    owner: root
-    content: |
-      # Edit this file to register hosts. Reboot or `systemctl restart
-      # skybase` after changes (or set up gcloud-storage sync if you want
-      # to drive it from a bucket). Hot-reload via fs.watch is enabled.
-      hosts: []
 
 runcmd:
   - systemctl daemon-reload

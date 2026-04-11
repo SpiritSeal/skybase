@@ -77,13 +77,19 @@ variable "webhook_url" {
   default     = ""
 }
 
-variable "billing_account" {
-  description = "GCP billing account ID for the budget. Find via `gcloud billing accounts list`. Format is XXXXXX-XXXXXX-XXXXXX."
+variable "iap_oauth2_client_id" {
+  description = "OAuth 2.0 client ID for IAP. Personal Google accounts (no organization) cannot create IAP brands programmatically since July 2025, so create the OAuth consent screen and client manually in the GCP Console (APIs & Services → OAuth consent screen → External; then Credentials → Create OAuth client ID → Web application). Add `https://iap.googleapis.com/v1/oauth/clientIds/<this-id>:handleRedirect` as an Authorized redirect URI. Pass the client_id here."
   type        = string
 }
 
-variable "monthly_budget_usd" {
-  description = "Monthly spending cap in USD. The budget only ALERTS — it doesn't hard-cap spending — but the alert thresholds are aggressive (50/90/100%) and a Pub/Sub-based killswitch can be wired in if needed."
-  type        = number
-  default     = 10
+variable "iap_oauth2_client_secret" {
+  description = "OAuth 2.0 client secret matching `iap_oauth2_client_id`. Treat as sensitive — keep in `secrets.auto.tfvars`, not committed."
+  type        = string
+  sensitive   = true
 }
+
+# NOTE: `billing_account` and `monthly_budget_usd` are not Terraform-managed
+# anymore — the billing budget is created out-of-band via the REST API
+# (see DEPLOY.md). Terraform-managed billing budgets require a quota project
+# on Application Default Credentials and have rough edges on personal
+# accounts; the REST path "just works."

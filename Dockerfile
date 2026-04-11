@@ -17,9 +17,13 @@ COPY apps/web/package.json apps/web/
 COPY apps/server/package.json apps/server/
 COPY packages/shared/package.json packages/shared/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY packages/shared packages/shared
+# Build the shared package's dist/ first — apps/web's vite build resolves
+# `@skybase/shared` against `dist/index.js` per the package's main field.
+RUN pnpm --filter @skybase/shared build
+
 COPY apps/web apps/web
 RUN pnpm --filter @skybase/web build
 
@@ -37,9 +41,12 @@ COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY packages/shared packages/shared
+# Build shared first — server's tsc consumes shared's dist/*.d.ts.
+RUN pnpm --filter @skybase/shared build
+
 COPY apps/server apps/server
 
 # tsx is fine for production for a personal tool, but compile so cold-start
@@ -67,6 +74,11 @@ COPY --from=server-builder /app/apps/server/dist ./apps/server/dist
 COPY --from=server-builder /app/apps/server/package.json ./apps/server/package.json
 COPY --from=server-builder /app/packages/shared ./packages/shared
 COPY --from=web-builder    /app/apps/web/dist  ./apps/web/dist
+
+# Bake the host inventory into the image. To update hosts you rebuild the
+# image and redeploy. (Future improvement: pull from a Secret Manager
+# secret in cloud-init so updates don't require an image bump.)
+COPY config/hosts.yaml /etc/skybase/hosts.yaml
 
 # Persistent disk goes here in production (subscriptions JSON, etc.).
 RUN mkdir -p /var/lib/skybase && chown skybase:skybase /var/lib/skybase
