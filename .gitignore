@@ -1,0 +1,28 @@
+node_modules
+dist
+build
+.DS_Store
+*.log
+.env
+.env.local
+coverage
+.turbo
+.vite
+.pnpm-store
+
+# secrets — never commit
+*.pem
+id_ed25519
+id_rsa
+id_ecdsa
+known_hosts
+vapid.json
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.auto.tfvars
+!*.tfvars.example
+crash.log

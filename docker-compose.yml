@@ -1,0 +1,25 @@
+# Local-dev convenience: build the prod image and run with the user's
+# real ssh key + a checked-in hosts.yaml. NOT for production deploys —
+# Terraform handles that.
+
+services:
+  skybase:
+    build: .
+    image: skybase:dev
+    ports:
+      - "8080:8080"
+    environment:
+      SKYBASE_TRUST_IAP: "0"
+      SKYBASE_HOSTS_CONFIG: /etc/skybase/hosts.yaml
+      SKYBASE_SSH_KEY: /run/skybase/id_rsa
+      SKYBASE_VAPID_FILE: /run/skybase/vapid.json
+      SKYBASE_SUBSCRIPTIONS: /var/lib/skybase/subscriptions.json
+    volumes:
+      - ./config/hosts.yaml:/etc/skybase/hosts.yaml:ro
+      - ${HOME}/.ssh/id_rsa:/run/skybase/id_rsa:ro
+      - ${HOME}/.ssh/known_hosts:/run/skybase/known_hosts:ro
+      - ./local/vapid.json:/run/skybase/vapid.json:ro
+      - skybase-data:/var/lib/skybase
+
+volumes:
+  skybase-data:

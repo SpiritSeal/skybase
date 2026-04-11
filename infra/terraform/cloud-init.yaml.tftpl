@@ -1,0 +1,59 @@
+#cloud-config
+#
+# COS cloud-init: pull the skybase container, fetch secrets from Secret
+# Manager into a tmpfs (so they're never on disk), then run.
+
+write_files:
+  - path: /etc/systemd/system/skybase.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=skybase server
+      Wants=network-online.target
+      After=network-online.target docker.socket
+      Requires=docker.socket
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=5
+
+      # Make /run/skybase a private tmpfs and populate it with the secrets
+      # we fetch from Secret Manager. Files never touch persistent disk.
+      ExecStartPre=/usr/bin/mkdir -p /run/skybase /var/lib/skybase /etc/skybase
+      ExecStartPre=/usr/bin/mount -t tmpfs -o size=1m,mode=0700 tmpfs /run/skybase
+      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${ssh_key_secret_id} > /run/skybase/id_rsa && chmod 600 /run/skybase/id_rsa'
+      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${known_hosts_secret_id} > /run/skybase/known_hosts && chmod 600 /run/skybase/known_hosts'
+      ExecStartPre=/usr/bin/sh -c 'docker run --rm google/cloud-sdk:slim gcloud secrets versions access latest --secret=${vapid_secret_id} > /run/skybase/vapid.json && chmod 600 /run/skybase/vapid.json'
+
+      # Configure docker to authenticate to Artifact Registry.
+      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries=${artifact_registry_host}
+      ExecStartPre=/usr/bin/docker pull ${image}
+
+      ExecStart=/usr/bin/docker run --rm --name skybase \
+        -p 8080:8080 \
+        -v /run/skybase:/run/skybase:ro \
+        -v /var/lib/skybase:/var/lib/skybase \
+        -v /etc/skybase:/etc/skybase:ro \
+        -e SKYBASE_TRUST_IAP=1 \
+        %{ if webhook_url != "" }-e SKYBASE_WEBHOOK_URL=${webhook_url} -e SKYBASE_WEBHOOK_TOKEN_FILE=/run/skybase/webhook_token \%{ endif }
+        ${image}
+
+      ExecStop=/usr/bin/docker stop skybase
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/skybase/hosts.yaml
+    permissions: "0644"
+    owner: root
+    content: |
+      # Edit this file to register hosts. Reboot or `systemctl restart
+      # skybase` after changes (or set up gcloud-storage sync if you want
+      # to drive it from a bucket). Hot-reload via fs.watch is enabled.
+      hosts: []
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now skybase.service

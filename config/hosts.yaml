@@ -1,0 +1,20 @@
+# skybase host registry — generated from ~/.ssh/config (ratbat, broyojo).
+# Hot-reloaded by the server on change.
+#
+# Both hosts use ~/.ssh/id_rsa (verified for ratbat; assumed for broyojo since
+# it's the same user account). The key is mounted globally at the path in
+# $SKYBASE_SSH_KEY, so no per-host identityFile is needed here.
+
+hosts:
+  - id: ratbat
+    label: "ratbat (GTISC)"
+    host: ratbat.gtisc.gatech.edu
+    user: saketh
+    defaultTmuxName: main
+
+  - id: broyojo
+    label: "broyojo"
+    host: server.broyojo.com
+    user: saketh
+    port: 2222
+    defaultTmuxName: main

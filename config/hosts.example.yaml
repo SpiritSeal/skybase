@@ -1,0 +1,28 @@
+# skybase host registry. Copy to config/hosts.yaml and edit.
+#
+# This file is hot-reloaded by the server on change (no restart needed).
+# Each host must have id/label/host/user. The server SSHes out using the key
+# at $SKYBASE_SSH_KEY (defaults to ~/.ssh/id_ed25519) unless `identityFile`
+# is set per-host.
+
+hosts:
+  - id: prod
+    label: "Production box"
+    host: prod.example.com
+    user: spyre
+    # port: 22                     # default
+    # identityFile: ~/.ssh/id_prod # override the global key
+    # proxyJump: bastion.example.com
+    defaultTmuxName: main
+
+  - id: dev
+    label: "Dev server"
+    host: 10.0.0.42
+    user: spyre
+    defaultTmuxName: main
+
+  # - id: laptop
+  #   label: "MacBook"
+  #   host: laptop.tail-scale.ts.net
+  #   user: spyre
+  #   defaultTmuxName: claude

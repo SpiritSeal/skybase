@@ -1,0 +1,19 @@
+project_id        = "your-gcp-project"
+region            = "us-central1"
+zone              = "us-central1-a"
+domain            = "skybase.example.com"
+iap_member        = "user:you@example.com"
+iap_support_email = "you@example.com"
+image             = "us-central1-docker.pkg.dev/your-gcp-project/skybase/skybase:0.1.0"
+monthly_budget_usd = 10
+
+# Optional outbound webhook (e.g. ntfy.sh, Discord, Slack, custom).
+# webhook_url = "https://ntfy.sh/your-topic"
+
+# NOTE: `billing_account` is intentionally NOT in this file. Put it in a
+# sibling `secrets.auto.tfvars` (gitignored, auto-loaded by Terraform):
+#
+#   echo 'billing_account = "0000XX-XXXXXX-XXXXXX"' > secrets.auto.tfvars
+#
+# This keeps the billing account ID out of any terraform.tfvars you might
+# paste into a chat or screenshot.
