@@ -283,24 +283,54 @@ export function App(): JSX.Element {
   // ─── Local-mode dev helper ──────────────────────────────────────────
   const isLocalDev = new URLSearchParams(location.search).get("local") === "1";
 
+  // ─── Sidebar drawer toggle ─────────────────────────────────────────
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const toggleSidebar = (): void => setSidebarOpen((v) => !v);
+  // Auto-close the drawer on mobile after selecting a session so the
+  // terminal takes the full screen.
+  const isMobile =
+    typeof window !== "undefined" && window.innerWidth <= 720;
+  const openSessionAndClose = (hostId: string, tmuxName: string): void => {
+    openSession(hostId, tmuxName);
+    if (isMobile) setSidebarOpen(false);
+  };
+  const pickSessionAndClose = (id: string): void => {
+    setActive(id);
+    if (isMobile) setSidebarOpen(false);
+  };
+
   return (
-    <div className="app">
+    <div className={`app ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
+      {/* Overlay behind the sidebar on mobile — click to close the drawer. */}
+      {sidebarOpen && isMobile && (
+        <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
       <Sidebar
         hosts={hosts}
         remoteSessions={remoteSessions}
         open={open}
         active={active}
         status={status}
-        onOpenSession={openSession}
-        onPickSession={setActive}
+        onOpenSession={openSessionAndClose}
+        onPickSession={pickSessionAndClose}
         onCloseSession={closeSession}
         onKillSession={killRemoteSession}
         onRefreshHost={refreshHostSessions}
         isLocalDev={isLocalDev}
+        onToggle={toggleSidebar}
       />
       <main className="main">
         {open.length === 0 ? (
           <div className="empty">
+            {!sidebarOpen && (
+              <button
+                className="sidebar-toggle"
+                onClick={toggleSidebar}
+                style={{ position: "absolute", top: 12, left: 12 }}
+              >
+                ☰
+              </button>
+            )}
             Pick a host on the left to open a tmux session.
           </div>
         ) : (
@@ -321,6 +351,15 @@ export function App(): JSX.Element {
               aria-hidden={s.id !== active}
             >
               <header className="main-header">
+                {!sidebarOpen && (
+                  <button
+                    className="sidebar-toggle"
+                    onClick={toggleSidebar}
+                    title="Show session selector"
+                  >
+                    ☰
+                  </button>
+                )}
                 <span>
                   {s.hostLabel} · <strong>{s.tmuxName}</strong>
                 </span>
@@ -362,6 +401,7 @@ interface SidebarProps {
   onCloseSession: (id: string) => void;
   onKillSession: (hostId: string, tmuxName: string) => void;
   onRefreshHost: (hostId: string) => void;
+  onToggle: () => void;
   isLocalDev: boolean;
 }
 
@@ -382,9 +422,18 @@ function Sidebar(props: SidebarProps): JSX.Element {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        skybase
-        <span style={{ fontSize: 11, color: "var(--fg-dim)" }}>
-          {props.status}
+        <span>skybase</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "var(--fg-dim)" }}>
+            {props.status}
+          </span>
+          <button
+            className="sidebar-toggle"
+            onClick={props.onToggle}
+            title="Hide session selector"
+          >
+            ◀
+          </button>
         </span>
       </div>
       <div className="sidebar-list">

@@ -73,6 +73,17 @@ input[type="text"] {
   grid-template-columns: 240px 1fr;
   height: 100vh;
   height: 100dvh;
+  overflow: hidden;
+}
+
+/* When the sidebar is collapsed, the grid column shrinks to zero and the
+   sidebar slides out of view via transform. The terminal main pane takes
+   the full width. The transition gives a smooth drawer-close effect. */
+.app.sidebar-collapsed {
+  grid-template-columns: 0 1fr;
+}
+.app.sidebar-collapsed .sidebar {
+  transform: translateX(-100%);
 }
 
 .sidebar {
@@ -81,6 +92,35 @@ input[type="text"] {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: transform 0.2s ease;
+  /* Ensure the sidebar is painted above the main content so it slides over
+     rather than behind on collapse. */
+  z-index: 10;
+}
+
+/* Toggle button used in both the sidebar header ("◀" to collapse) and the
+   main header ("☰" to expand). Minimal styling so it sits inline. */
+.sidebar-toggle {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.sidebar-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* Dark overlay behind the sidebar on mobile — click to dismiss. */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9;
 }
 .sidebar-header {
   padding: 12px 16px;
@@ -248,11 +288,21 @@ input[type="text"] {
 @media (max-width: 720px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
   }
+  /* On mobile the sidebar is a full-height overlay drawer that slides in
+     from the left. Default to collapsed; the hamburger button opens it. */
   .sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 35vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+    max-height: none;
+    transform: translateX(0);
+  }
+  .app.sidebar-collapsed .sidebar {
+    transform: translateX(-100%);
   }
 }

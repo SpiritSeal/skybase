@@ -1,0 +1,75 @@
+# Auto-deploy skybase on push to main.
+#
+# Flow: checkout → auth to GCP via Workload Identity Federation (no stored
+# keys) → build linux/amd64 Docker image → push to Artifact Registry →
+# SSH to the GCE VM via IAP tunnel → restart the systemd service (which
+# pulls the new image on startup).
+#
+# Prerequisites (already set up):
+#   - Workload Identity Pool "github-pool" with OIDC provider "github-provider"
+#     bound to repo SpiritSeal/skybase
+#   - Service account skybase-ci@ with roles: artifactregistry.writer,
+#     compute.instanceAdmin.v1, iap.tunnelResourceAccessor, iam.serviceAccountUser
+#   - The CI SA can be impersonated by the WIF pool via iam.workloadIdentityUser
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual trigger from the GitHub UI
+
+permissions:
+  contents: read
+  id-token: write # required for WIF OIDC token exchange
+
+env:
+  PROJECT_ID: skybase-yssaketh
+  REGION: us-central1
+  ZONE: us-central1-a
+  IMAGE: us-central1-docker.pkg.dev/skybase-yssaketh/skybase/skybase:0.1.0
+  VM_NAME: skybase
+  CI_SA: skybase-ci@skybase-yssaketh.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/299920126582/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restart skybase service on VM
+        run: |
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.ZONE }} \
+            --project=${{ env.PROJECT_ID }} \
+            --tunnel-through-iap \
+            --command='sudo systemctl restart skybase' \
+            --quiet \
+            -- -o StrictHostKeyChecking=no
