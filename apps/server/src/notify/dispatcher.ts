@@ -79,6 +79,9 @@ export class NotificationDispatcher {
 
     const last = this.lastFire.get(key);
     if (last !== undefined && now - last < this.cooldownMs) {
+      console.log(
+        `[notify] suppressed by cooldown: session=${sessionId} key=${dedupeKey} (${now - last}ms since last)`,
+      );
       return null;
     }
     this.lastFire.set(key, now);
@@ -93,14 +96,26 @@ export class NotificationDispatcher {
     };
     if (event.dedupeId !== undefined) msg.dedupeId = event.dedupeId;
 
-    // Suppress out-of-band delivery if the user is already looking at this
-    // session. We still return the message so it appears in the in-app log.
-    const suppressed = this.focusedSessionId === sessionId;
-    if (!suppressed) {
+    // Always fan out to push + webhook. The previous implementation
+    // suppressed push when `focusedSessionId === sessionId`, but that
+    // check used a single GLOBAL focus state shared across ALL WebSocket
+    // connections. If the user had the desktop tab open on ratbat:main
+    // and then picked up their phone, the phone would never get a push
+    // because the desktop tab's focus state suppressed it. Push
+    // notifications are specifically for "user is away" — they should
+    // always fire, and the device-level OS handles dedup (the `tag` in
+    // showNotification collapses repeats for the same session).
+    //
+    // The focus state now only affects the unread badge counter: if the
+    // user is looking at the session, we don't increment unread.
+    const focused = this.focusedSessionId === sessionId;
+    if (!focused) {
       this.unread.set(sessionId, (this.unread.get(sessionId) ?? 0) + 1);
-      // Fire-and-forget — we don't want a slow webhook blocking the WS path.
-      void this.fanout(msg);
     }
+    console.log(
+      `[notify] dispatching: session=${sessionId} title=${JSON.stringify(msg.title)} body=${JSON.stringify(msg.body)} focused=${focused}`,
+    );
+    void this.fanout(msg);
 
     return msg;
   }
@@ -109,10 +124,17 @@ export class NotificationDispatcher {
     const tasks: Promise<unknown>[] = [];
     if (this.webPush) {
       tasks.push(
-        this.webPush.push(msg).catch((err) => {
-          console.error("[notify] web push failed:", err);
-        }),
+        this.webPush
+          .push(msg)
+          .then(() => {
+            console.log(`[notify] web push sent for session=${msg.sessionId}`);
+          })
+          .catch((err) => {
+            console.error("[notify] web push failed:", err);
+          }),
       );
+    } else {
+      console.warn("[notify] web push not configured, skipping");
     }
     if (this.webhook) {
       const payload: WebhookPayload = {

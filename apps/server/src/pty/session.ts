@@ -63,7 +63,12 @@ export class PtySession {
           b64: Buffer.from(cleaned, "utf8").toString("base64"),
         });
       }
-      for (const ev of events) this.cb.onNotification(ev);
+      for (const ev of events) {
+        console.log(
+          `[pty] osc event from session=${this.sessionId}: source=${ev.source} title=${JSON.stringify(ev.title)} body=${JSON.stringify(ev.body)}`,
+        );
+        this.cb.onNotification(ev);
+      }
     });
 
     pty.onExit(({ exitCode, signal }) => {
