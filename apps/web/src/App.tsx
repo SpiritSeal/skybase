@@ -50,6 +50,10 @@ export function App(): JSX.Element {
     lsRead<string | null>(LS_ACTIVE, null),
   );
   const [toast, setToast] = useState<SrvNotification | null>(null);
+  /** Counts consecutive WS reconnect failures. If high, we suspect the IAP
+   *  session is missing/expired and show a "sign in" hint instead of just
+   *  "reconnecting…" forever. */
+  const [reconnectFails, setReconnectFails] = useState(0);
 
   // Persist open + active to localStorage on every change. Synchronous —
   // localStorage is fast and there's no benefit to debouncing for a list
@@ -209,7 +213,11 @@ export function App(): JSX.Element {
   // ─── WS lifecycle (mount-once) ──────────────────────────────────────
   useEffect(() => {
     ws.connect();
-    const offStatus = ws.onStatus(setStatus);
+    const offStatus = ws.onStatus((s) => {
+      setStatus(s);
+      if (s === "open") setReconnectFails(0);
+      if (s === "reconnecting") setReconnectFails((n) => n + 1);
+    });
     const off = ws.on((msg: ServerMessage) => {
       if (msg.t === "sessions") {
         setHosts(msg.hosts);
@@ -381,6 +389,31 @@ export function App(): JSX.Element {
         <div className="toast" onClick={() => setToast(null)}>
           <div className="title">{toast.title || "skybase"}</div>
           <div className="body">{toast.body}</div>
+        </div>
+      )}
+
+      {/* After 3+ consecutive reconnect failures, the IAP session is most
+          likely missing or expired. Show a sign-in hint instead of leaving
+          the user staring at "reconnecting…" forever. On mobile PWAs this
+          is especially common because the standalone webview has its own
+          cookie jar separate from Safari — the user has to sign in inside
+          the PWA, not just in Safari. */}
+      {reconnectFails >= 3 && (
+        <div className="auth-hint">
+          <p>
+            <strong>Can't connect to the server.</strong>
+          </p>
+          <p>
+            Your session may have expired.{" "}
+            <a href="/" onClick={() => window.location.reload()}>
+              Reload to sign in
+            </a>
+            .
+          </p>
+          <p style={{ fontSize: 12, color: "var(--fg-dim)", marginTop: 8 }}>
+            On iOS, make sure you sign in inside the installed PWA, not in
+            Safari — they have separate cookie jars.
+          </p>
         </div>
       )}
     </div>

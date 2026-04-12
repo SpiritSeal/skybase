@@ -265,6 +265,27 @@ input[type="text"] {
   padding: 24px;
 }
 
+/* Auth hint shown after repeated WS reconnect failures. Positioned
+   center-screen so it's visible even when no sessions are open. */
+.auth-hint {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-elev);
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  padding: 20px 28px;
+  max-width: 360px;
+  text-align: center;
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.auth-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .toast {
   position: fixed;
   bottom: 16px;
