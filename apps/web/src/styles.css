@@ -286,11 +286,16 @@ input[type="text"] {
 }
 
 @media (max-width: 720px) {
-  .app {
+  /* On mobile the sidebar is position:fixed (overlay), so it's out of
+     grid flow. The grid should ALWAYS be a single 1fr column regardless
+     of whether the sidebar is open or collapsed — otherwise `<main>`
+     lands in a 0-width first column from the desktop `.sidebar-collapsed`
+     rule and the terminal disappears (black screen). */
+  .app,
+  .app.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
-  /* On mobile the sidebar is a full-height overlay drawer that slides in
-     from the left. Default to collapsed; the hamburger button opens it. */
+  /* Full-height overlay drawer that slides in from the left. */
   .sidebar {
     position: fixed;
     top: 0;
