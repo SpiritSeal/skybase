@@ -336,6 +336,63 @@ export function TerminalPanel({
     };
     container.addEventListener("paste", onPaste);
 
+    // ─── Touch-to-wheel bridge for mobile tmux scrolling ────────────
+    // xterm.js v5 explicitly SKIPS touch handling when mouse tracking is
+    // active (`areMouseEventsActive === true`), which tmux's `mouse on`
+    // sets via DECSET 1002/1006. The touchstart/touchmove handlers in
+    // xterm.js's Terminal.ts return early without doing anything when
+    // mouse mode is on. Desktop wheel events still work because xterm.js
+    // has a separate `wheel` handler that converts them into either
+    // cursor-key sequences (alt buffer) or mouse-wheel reports.
+    //
+    // We bridge the gap: intercept touch gestures on the terminal
+    // container and synthesize WheelEvents. xterm.js's wheel handler
+    // processes them identically to real desktop scroll events.
+    let touchStartY: number | null = null;
+    const TOUCH_SCROLL_THRESHOLD = 3; // px of movement before we start
+
+    const onTouchStart = (ev: TouchEvent): void => {
+      if (ev.touches.length === 1) {
+        touchStartY = ev.touches[0]!.clientY;
+      }
+    };
+
+    const onTouchMove = (ev: TouchEvent): void => {
+      if (touchStartY === null || ev.touches.length !== 1) return;
+      const currentY = ev.touches[0]!.clientY;
+      const deltaY = touchStartY - currentY;
+      if (Math.abs(deltaY) < TOUCH_SCROLL_THRESHOLD) return;
+      touchStartY = currentY;
+
+      // Dispatch a synthetic WheelEvent on the xterm screen element.
+      // xterm.js's existing wheel handler reads deltaY + deltaMode and
+      // does the right thing (cursor keys in alt buffer / mouse reports
+      // when mouse tracking is on / viewport scroll otherwise).
+      const target =
+        container.querySelector(".xterm-screen") ?? container;
+      target.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY,
+          deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      ev.preventDefault(); // prevent browser page-scroll
+    };
+
+    const onTouchEnd = (): void => {
+      touchStartY = null;
+    };
+
+    container.addEventListener("touchstart", onTouchStart, {
+      passive: true,
+    });
+    container.addEventListener("touchmove", onTouchMove, {
+      passive: false, // need to preventDefault
+    });
+    container.addEventListener("touchend", onTouchEnd, { passive: true });
+
     // Receive WS messages targeting this session. We pass the raw bytes
     // to xterm.js as a Uint8Array — xterm.js then handles the UTF-8 → cell
     // grid conversion internally and renders multibyte characters at the
@@ -410,6 +467,9 @@ export function TerminalPanel({
         offStatus();
         ro.disconnect();
         container.removeEventListener("paste", onPaste);
+        container.removeEventListener("touchstart", onTouchStart);
+        container.removeEventListener("touchmove", onTouchMove);
+        container.removeEventListener("touchend", onTouchEnd);
         if (resizeTimer !== null) clearTimeout(resizeTimer);
         ws.send({ t: "detach", sessionId });
         term.dispose();
