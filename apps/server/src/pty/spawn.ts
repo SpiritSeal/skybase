@@ -111,9 +111,19 @@ export function spawnPty(opts: SpawnOpts): IPty {
   //      with all options at defaults. Chaining keeps both commands on
   //      the same server invocation.
   const tmuxName = shellQuote(opts.tmuxName);
+  // Chain all tmux options in a single invocation so they share the same
+  // server instance. Order matters: new-session first (creates the server
+  // if needed), then global options that apply to all sessions/panes.
+  //
+  //   allow-passthrough on  — required for OSC notification forwarding
+  //   mouse on              — enables touch-scroll (enters copy-mode +
+  //                           scrolls scrollback), touch-tap to switch
+  //                           panes, and touch-drag to resize panes.
+  //                           Essential for mobile use.
   const remoteCmd =
     `exec tmux new-session -A -s ${tmuxName} ` +
-    `\\; set-option -g allow-passthrough on`;
+    `\\; set-option -g allow-passthrough on ` +
+    `\\; set-option -g mouse on`;
   args.push(remoteCmd);
 
   return spawn("ssh", args, {

@@ -265,6 +265,43 @@ input[type="text"] {
   padding: 24px;
 }
 
+/* Mobile action bar — sticky at the bottom of each terminal-host,
+   above the soft keyboard. Provides buttons for keys that are hard to
+   type on a phone: tmux prefix, Ctrl+C, Escape, arrows, Tab. */
+.action-bar {
+  display: none; /* hidden on desktop */
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 720px) {
+  .action-bar {
+    display: flex;
+  }
+}
+.action-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: "JetBrains Mono", monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  touch-action: manipulation; /* prevent double-tap zoom */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.action-btn:active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
 /* Auth hint shown after repeated WS reconnect failures. Positioned
    center-screen so it's visible even when no sessions are open. */
 .auth-hint {

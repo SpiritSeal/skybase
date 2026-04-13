@@ -10,6 +10,7 @@ import type {
 } from "@skybase/shared";
 import { WsClient, type WsStatus } from "./wsClient.js";
 import { TerminalPanel } from "./Terminal.js";
+import { ActionBar } from "./ActionBar.js";
 import { getStatus, sendTest, subscribe, unsubscribe } from "./push.js";
 
 interface OpenSession {
@@ -380,6 +381,7 @@ export function App(): JSX.Element {
                 tmuxName={s.tmuxName}
                 isActive={s.id === active}
               />
+              <ActionBar ws={ws} sessionId={s.id} />
             </div>
           ))
         )}
