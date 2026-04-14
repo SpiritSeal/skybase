@@ -113,17 +113,31 @@ export function spawnPty(opts: SpawnOpts): IPty {
   const tmuxName = shellQuote(opts.tmuxName);
   // Chain all tmux options in a single invocation so they share the same
   // server instance. Order matters: new-session first (creates the server
-  // if needed), then global options that apply to all sessions/panes.
+  // if needed), then global options + key bindings.
   //
   //   allow-passthrough on  — required for OSC notification forwarding
   //   mouse on              — enables touch-scroll (enters copy-mode +
   //                           scrolls scrollback), touch-tap to switch
   //                           panes, and touch-drag to resize panes.
   //                           Essential for mobile use.
+  //
+  // Key bindings (rebound to inherit the active pane's working directory
+  // for new panes/windows — tmux's defaults start everything in $HOME):
+  //   prefix + c    — new-window in current pane's path
+  //   prefix + "    — split-window vertical in current pane's path
+  //   prefix + %    — split-window horizontal in current pane's path
+  //
+  // `bind` / `set-option` are server-global tmux commands that update the
+  // configuration in place without touching any running pane or process,
+  // so re-running this on every attach (including reconnects to existing
+  // sessions) is a no-op for users who are already in the middle of work.
   const remoteCmd =
-    `exec tmux new-session -A -s ${tmuxName} ` +
-    `\\; set-option -g allow-passthrough on ` +
-    `\\; set-option -g mouse on`;
+    `exec tmux new-session -A -s ${tmuxName}` +
+    ` \\; set-option -g allow-passthrough on` +
+    ` \\; set-option -g mouse on` +
+    ` \\; bind c new-window -c "#{pane_current_path}"` +
+    ` \\; bind '"' split-window -c "#{pane_current_path}"` +
+    ` \\; bind % split-window -h -c "#{pane_current_path}"`;
   args.push(remoteCmd);
 
   return spawn("ssh", args, {
